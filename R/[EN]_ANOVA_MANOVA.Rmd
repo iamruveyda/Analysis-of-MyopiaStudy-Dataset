@@ -1,0 +1,499 @@
+---
+title: "ANOVA and MANOVA"
+output:
+  html_notebook: default
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+# Introduction
+
+- <a href= '#understanding'>Understanding the Dataset</a>
+- <a href= '#normality'>Normality Test</a>
+  - <a href= '#shapiro-wilk'>Shapiro-Wilk Test</a>
+- <a href= '#anova'>Analysis of Variance (ANOVA)</a>
+  - <a href= '#one-way-anova'>One-way ANOVA</a>
+    - <a href= '#one-way-anova-levene'>Levene's Test</a>
+    - <a href= '#one-way-anova-descr'>Descriptive Statistics</a>
+    - <a href= '#one-way-anova-table'>ANOVA Table</a>
+  - <a href= '#two-way-anova'>Two-way ANOVA</a>
+    - <a href= '#two-way-anova-levene'>Levene's Test</a>
+    - <a href= '#two-way-anova-descr'>Descriptive Statistics</a>
+    - <a href= '#two-way-anova-table'>ANOVA Table</a>
+    - <a href= '#two-way-anova-tukey'>Tukey Test</a>
+- <a href= '#manova'>Multivariate Analysis of Variance (MANOVA)</a>
+  - <a href= '#one-way-manova'>One-way MANOVA</a>
+    - <a href= '#one-way-manova-boxm'>Homogeneity of Covariance Matrices</a>
+    - <a href= '#one-way-manova-levene'>Levene's Test</a>
+    - <a href= '#one-way-manova-descr'>Descriptive Statistics</a>
+    - <a href= '#one-way-manova-table'>MANOVA Table</a>
+  - <a href= '#two-way-manova'>Two-way MANOVA</a>
+    - <a href= '#two-way-manova-boxm'>Homogeneity of Covariance Matrices</a>
+    - <a href= '#two-way-manova-descr'>Descriptive Statistics</a>
+    - <a href= '#two-way-manova-table'>MANOVA Table</a>
+
+
+<a id='understanding'></a>
+
+# Understanding the Dataset 
+
+```{r}
+# R Packages
+packages <- c("tidyverse", "ggplot2", "rstatix", "pander", "heplots", "readr")
+
+suppressPackageStartupMessages(lapply(packages, require, character.only = TRUE))
+
+# Importing Data
+df <- read.csv("./dataset/myopia-study.csv", sep = ",")
+
+# for kaggle
+# df <- read.csv("../input/myopia-study/myopia.csv", sep = ";")
+
+# Top 6 rows
+head(df)
+```
+
+```{r}
+class(df)
+```
+
+```{r}
+print(sapply(df, class))
+```
+
+```{r}
+# Structure of the data frame
+str(df)
+```
+
+```{r}
+# Statistical summary
+summary(df)
+```
+
+```{r}
+# Check missing values
+sum(is.na(df))
+```
+
+<a id='normality'></a>
+
+# Normality Test
+
+The assumption of normality should be considered to perform the analysis.
+Considering the normality of all variables;
+
+- H0: Variables provide the assumption of normality
+
+- H1: Variables do not satisfy the assumption of normality
+
+</br>
+
+- p ≤ (α = 0.05) : **reject** H0
+
+- p \> (α = 0.05) : reject H1 (or **accept** H0) [[ref]](https://www.geeksforgeeks.org/p-value/)
+
+<a id='shapiro-wilk'></a>
+
+## Shapiro-Wilk Test
+
+Shapiro-Wilk's test is a normality test in frequentist statistics.
+
+It is among the three tests for normality designed for detecting all kinds of departure from normality [[ref]](https://www.geeksforgeeks.org/shapiro-wilk-test-in-r-programming/).
+
+```{r}
+results_01 <- lapply(df, shapiro.test)
+shapiro_data <- as.data.frame(do.call(rbind, results_01))
+shapiro_data <- shapiro_data[-c(1), ]
+
+# p-value check
+
+p <- c(as.numeric(shapiro_data$p.value))
+
+
+shapiro_data$p.value <- scales::pvalue(p,
+  accuracy = 0.05,
+  decimal.mark = ".",
+  add_p = TRUE
+)
+
+shapiro_table <- shapiro_data %>%
+  filter(!is.na(as.numeric(shapiro_data$statistic))) %>%
+  select(!data.name)
+
+pander(shapiro_table)
+```
+
+<u>**Comment**</u><br>
+
+Since the p values of the Axial Length (AL), Anterior Chamber Depth (ACD), Lens Thickness (LT) and Vitreous Chamber Depth (VCD) variables are greater than 0.05, these variables provide the assumption of normality.
+
+The GENDER variable returns 0 = Male and 1 = Female, but these should not be considered numeric as they are just levels.
+In order for such variables to be treated as factors rather than numbers, we need to explicitly convert them to factors using the `as.factor()` function.
+
+```{r}
+df$AGE <- as.factor(df$AGE)
+df$MYOPIC <- as.factor(df$MYOPIC)
+df$GENDER <- as.factor(df$GENDER)
+df$MOMMY <- as.factor(df$MOMMY)
+df$DADMY <- as.factor(df$DADMY)
+```
+
+<a id='anova'></a>
+
+# Analysis of Variance (ANOVA) 
+
+ANOVA is a statistical method that separates observed variance data into different components to use for additional tests [[ref]](https://www.investopedia.com/terms/a/anova.asp).
+
+**_A one-way ANOVA uses one independent variable, while a two-way ANOVA uses two independent variables_** [[ref]](https://www.scribbr.com/statistics/one-way-anova/).
+
+<a id='one-way-anova'></a>
+
+## One-way ANOVA
+
+> Dependent Variable: Lens Thickness (LT)
+>
+> Independent Variable ("Factor"): Gender
+
+<a id='one-way-anova-levene'></a>
+
+### Levene's Test
+
+Levene's test is an inferential statistic used to evaluate the **equality of variances** for a variable determined for two or more groups [[ref]](https://www.geeksforgeeks.org/levenes-test-in-r-programming/).
+
+For Equality of Variance,
+
+- H0: Variances are homogeneous.
+- H1: The variance is not homogeneous.
+
+```{r}
+# examine whether it has equal variance
+
+print("AL - Axial Length")
+levene_test(data = df, AL ~ GENDER, center = mean)
+
+print("ACD - Anterior Chamber Depth")
+levene_test(data = df, ACD ~ GENDER, center = mean)
+
+print("LT - Lens Thickness")
+levene_test(data = df, LT ~ GENDER, center = mean)
+
+print("VCD - Vitreous Chamber Depth")
+levene_test(data = df, VCD ~ GENDER, center = mean)
+```
+
+<u>**Comment**</u><br>
+
+Since p values are greater than 0.05, the H0 hypothesis is accepted variances can be considered homogeneous.
+
+<a id='one-way-anova-descr'></a>
+
+### Descriptive Statistics
+
+```{r}
+group_by(df, GENDER) %>%
+  summarise(
+    n = n(),
+    mean = mean(LT, na.rm = TRUE),
+    sd = sd(LT, na.rm = TRUE),
+    se = sd / sqrt(n),
+    LCL = mean - qt(1 - (0.05 / 2), n - 1) * se,
+    UCL = mean + qt(1 - (0.05 / 2), n - 1) * se,
+    min = min(LT, na.rm = TRUE),
+    max = max(LT, na.rm = TRUE)
+  )
+```
+
+For Output;
+
+- n : The number of observations for each gender.
+
+- mean : The mean value for each gender.
+
+- median : The median value for each gender.
+
+- sd : Standard Deviation
+
+- se : Standard Error
+
+- LCL, UCL : It means the lower and upper confidence intervals of the mean. Assuming that the data are normally distributed, we can be 95% sure that the true mean is between the lower and upper values indicated for each treatment group.
+
+- min, max : The minimum and maximum value for each gender.
+
+<a id='one-way-anova-table'></a>
+
+### ANOVA Table
+
+```{r}
+model_a1 <- aov(LT ~ GENDER, data = df)
+
+pander(summary(model_a1))
+```
+
+In the ANOVA Table, it was tested whether there was a difference in lens thickness between the groups.
+
+- H0: There is no difference
+
+- H1: There is difference
+
+<u>**Comment**</u><br>
+
+This output indicates whether the results between groups are significant.
+The columns for the F value and Pr(\>F) in the table correspond to the p-value.
+We know that H0 will be rejected if it is less than 0.05.
+
+Pr(\>F) value is 0.0629.
+In this case, since the thickness of the lens is greater than 0.05, it can be considered that there is no difference.
+
+<u>**NOTE**</u><br>
+For _IBM SPSS Statistics_ : `Analyze > Compare Means > One-Way ANOVA`. You can perform the analysis by ticking the ones you want in the "Options" section.
+
+<a id='two-way-anova'></a>
+
+## Two-way ANOVA
+
+> Dependent Variables: Spherical Equivalent Refraction (SPHEQ)
+>
+> Independent Variables ("Factors"): GENDER, AGE
+
+<a id='two-way-anova-levene'></a>
+
+### Levene's Test
+
+```{r}
+levene_test(data = df, SPHEQ ~ GENDER * AGE, center = mean)
+```
+
+<u>**Comment**</u><br>
+
+Since the p-values are greater than 0.05, the H0 hypothesis is <u>accepted</u> and it can be said that the variances are homogeneous.
+
+<a id='two-way-anova-descr'></a>
+
+### Descriptive Statistics
+
+```{r}
+group_by(df, GENDER, AGE) %>%
+  summarise(
+    mean = mean(SPHEQ, na.rm = TRUE),
+    sd = sd(SPHEQ, na.rm = TRUE),
+    n = n(), .groups = "drop"
+  )
+```
+
+<a id='two-way-anova-table'></a>
+
+### ANOVA Table
+
+```{r}
+model_a2 <- lm(
+  SPHEQ ~ GENDER * AGE,
+  data = df,
+  contrasts = list(GENDER = contr.sum, AGE = contr.sum)
+)
+
+two_way <- anova_test(model_a2,
+  type = 3,
+  detailed = TRUE
+)
+
+pander(two_way)
+```
+
+For Output;
+
+Table: Tests of Between-Subjects Effects
+
+- SSn: Type III Sum of Squares
+- DFn: df, degrees of freedom
+- p: Sig., significance level
+- ges: Partial Eta Squared
+
+<u>**Comment**</u><br>
+
+This output indicates whether the independent categorical variables or their interactions are statistically significant.
+Here we should look at the p-values (GENDER, AGE, GENDER:AGE).
+
+- The p-value for gender is 0.0170 ((p ≤ 0.05) : **reject** H0).
+
+There is a difference in Spherical Equivalent Refraction (SPHEQ) level between men and women.
+
+- The p-value for age is 0.0014 ((p ≤ 0.05) : **reject** H0).
+
+There is a difference in the Spherical Equivalent Refraction (SPHEQ) level between the ages.
+
+- The p-value for the interaction between gender and age is 0.1676.
+
+<u>**NOTE**</u><br>
+
+For _IBM SPSS Statistics_ : `Analyze > General Linear Model > Univariate`. You can perform the analysis by ticking the ones you want in the "Options" section.
+
+<a id='two-way-anova-tukey'></a>
+
+### Tukey Test
+
+The results of the test for homogeneity of variance (Levene's Test) showed that they had equal variances. In the later ANOVA test, H0 was rejected. For this reason, it is necessary to look at the results of the Tukey HSD test.
+
+The column mean difference shows the difference between the means of the two groups being compared.
+
+```{r}
+tukey_hsd(model_a2, which = "AGE")
+```
+
+<u>**Comment**</u><br>
+
+Column Sig. (p-value) indicates whether the mean difference is statistically significant. There is a difference between 6-8, 6-9 and 7-8 years old.
+
+<u>**NOTE**</u><br>
+
+For _IBM SPSS Statistics_ : `Analyze > General Linear Model > Univariate`. You can perform the analysis by ticking the ones you want in the "Post Hoc" section.
+
+<a id='manova'></a>
+
+# Multivariate Analysis of Variance (MANOVA)
+
+Multivariate analysis of variance (MANOVA) is an extension of univariate analysis of variance (ANOVA) that measures the effect of independent categorical variables on a large number of dependent continuous variables.
+
+One-way MANOVA is used to determine whether there is a difference between groups (two or more) of the categorical variables on more than one continuous dependent variable.
+
+Two-way MANOVA is used to determine whether there is an interaction between two independent categorical variables on two or more continuous dependent variables.
+
+<u>**Summary**</u><br>
+
+> **One-way ANOVA**
+> 1 Independent Variable, 1 Dependent Variable
+
+> **Two-way ANOVA**
+> 2 Independent Variables, 1 Dependent
+
+> **One-way MANOVA**
+> 1 Independent Variable, 1+ Dependent Variables
+
+> **Two-way MANOVA**
+> 2 Independent Variables, 2+ Dependent Variables
+
+<a id='one-way-manova'></a>
+
+## One-way MANOVA
+
+
+> Dependent Variables: Anterior Chamber Depth (ACD), Axial Length (AL)
+>
+> Independent Variable ("Factor"): AGE
+
+<a id='one-way-manova-boxm'></a>
+
+### Homogeneity of Covariance Matrices
+
+It is an assumption that must be met in multivariate analysis. Homogeneity of covariance is when multiple groups have equal covariance matrices in an experimental design or statistical test.
+
+```{r}
+boxM(cbind(ACD, AL) ~ AGE, data = df)
+```
+
+<u>**Comment**</u><br>
+
+Among the covariance matrices between dependent variables;
+
+* H0: There is no difference
+* H1: There is a difference.
+
+Since the P-value is greater than 0.05, the H0 hypothesis is accepted. It provides equality of covariance.
+
+<a id='one-way-manova-levene'></a>
+
+### Levene's Test
+
+```{r}
+print("ACD - Anterior Chamber Depth")
+levene_test(data = df, ACD ~ AGE, center = mean)
+
+print("AL - Axial Length")
+levene_test(data = df, AL ~ AGE, center = mean)
+```
+
+<u>**Comment**</u><br>
+
+H0 hypothesis is accepted because p-values are greater than 0.05. The assumption of equality of variance is also provided.
+
+<a id='one-way-manova-descr'></a>
+
+### Descriptive Statistics
+
+```{r}
+df %>%
+  group_by(AGE) %>%
+  get_summary_stats(ACD, AL, type = "mean_sd")
+```
+
+<a id='one-way-manova-table'></a>
+
+### MANOVA Table
+
+```{r}
+model_m1 <- lm(cbind(ACD, AL) ~ AGE,
+  data = df
+)
+
+# Multivariate Tests
+summary(Manova(model_m1,
+  type = 3
+))
+```
+
+<u>**Comment**</u><br>
+
+Since p-value is smaller than 0.05, it can be said that there is a difference between Anterior Chamber Depth (ACD) and Axial Length (AL) groups.
+
+```{r}
+summary.aov(model_m1)
+```
+
+<a id='two-way-manova'></a>
+
+## Two-way MANOVA
+
+> Dependent Variables: DIOPTERHR, TVHR, SPORTHR
+>
+> Independent Variables ("Factors"): GENDER, MYOPIC
+
+<a id='two-way-manova-boxm'></a>
+
+### Homogeneity of Covariance Matrices
+
+```{r}
+boxM(cbind(DIOPTERHR, TVHR, SPORTHR) ~ GENDER * MYOPIC, data = df)
+```
+
+<a id='two-way-manova-descr'></a>
+
+### Descriptive Statistics
+
+```{r}
+df %>%
+  group_by(GENDER, MYOPIC) %>%
+  get_summary_stats(DIOPTERHR, TVHR, SPORTHR, type = "mean_sd")
+```
+
+<a id='two-way-manova-table'></a>
+
+### MANOVA Table
+
+```{r}
+model_m2 <-
+  lm(cbind(DIOPTERHR, TVHR, SPORTHR) ~ GENDER * MYOPIC, data = df)
+
+# Multivariate Tests
+summary(Manova(model_m2,
+  type = 3
+))
+```
+
+```{r}
+summary.aov(model_m2)
+```
+
+<u>**NOTE**</u><br>
+
+For _IBM SPSS Statistics_ : `Analyze > General Linear Model > Multivariate`. You can perform the analysis by ticking the ones you want in the "Options" section.
